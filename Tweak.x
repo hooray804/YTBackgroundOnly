@@ -196,6 +196,6 @@ static NSString * loadText(NSString *key) {
 
 %ctor {
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
-        kBGPStateKey: @YES,
+        kBGPStateKey: @NO,
     }];
 }
