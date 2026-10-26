@@ -174,7 +174,7 @@ static NSString * loadText(NSString *key) {
 
     YTIIcon *iConfig = [%c(YTIIcon) new];
     if ([iConfig respondsToSelector:@selector(setIconType:)]) {
-        iConfig.iconType = 317;
+        iConfig.iconType = 44;
     }
 
     if ([targetDelegate respondsToSelector:@selector(setSectionItems:forCategory:title:icon:titleDescription:headerHidden:)]) {
