@@ -12,6 +12,7 @@ A lightweight iOS tweak for YouTube that enables continuous background playback 
 
 - **Background Audio Playback:** Listen to your favorite videos and music while using other apps or with your device locked.
 - **Bypass "Video paused. Continue watching?" Prompts:** Prevents YouTube from pausing long playback sessions and asking if you are still watching.
+- **Hide Player on Dynamic Island:** Option to hide the media player from the Dynamic Island during playback *(Note: The lock screen media player will appear with blank title/artist metadata)*.
 - **Ultra Lightweight:** Pure Objective-C / Logos runtime hooks without complex UI overhead or unnecessary modifications.
 - **Multiple Injection Support:** Compatible with Rootless Jailbreak, TrollStore, LiveContainer, SideStore, and Feather.
 
@@ -19,10 +20,11 @@ A lightweight iOS tweak for YouTube that enables continuous background playback 
 
 ## Configuration & Settings
 
-YTBackgroundOnly includes a native toggle directly inside YouTube's settings menu, allowing you to turn the tweak on or off at any time without needing third-party helper tweaks.
+YTBackgroundOnly includes native toggles directly inside YouTube's settings menu, allowing you to customize behavior without needing third-party helper tweaks.
 
 - **Location:** Open YouTube > Settings > **Tweaks** > **YTBackgroundOnly**
-- **Master Toggle:** Enabling the switch activates background playback and disables interruption prompts. Disabling it instantly restores pure stock YouTube behavior without restarting the app.
+- **Stable background playback:** Master switch that enables background playback and bypasses the interruption prompts. Disabling it restores stock YouTube behavior immediately.
+- **Hide player on Dynamic Island:** Suppresses Now Playing metadata to keep the Dynamic Island clean during playback.
 - **Auto Localization:** The settings UI automatically adapts to your system language (supports both Korean and English).
 
 ---
