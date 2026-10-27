@@ -1,17 +1,38 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 
 static NSString * const kBGPStateKey = @"BGPToggleStatus";
-static const NSInteger kBGPSectionID = 3948;
+static const NSInteger kBGPSectionID = 2610;
+static const NSInteger kTweakGroupID = 'psyt';
 
 static BOOL fetchBGPState() {
     return [[NSUserDefaults standardUserDefaults] boolForKey:kBGPStateKey];
 }
 
+static BOOL isTweakGroupItem(id item) {
+    if (!item) return NO;
+    @try {
+        id val = [item valueForKey:@"type"];
+        if (val && [val integerValue] == kTweakGroupID) {
+            return YES;
+        }
+    } @catch (id ex) {}
+    return NO;
+}
+
+static BOOL isYouGroupSettingsActive() {
+    Class cls = objc_getClass("YTSettingsGroupData");
+    if (cls && class_getClassMethod(cls, sel_registerName("tweaks")) != NULL) {
+        return YES;
+    }
+    return NO;
+}
+
 static NSString * loadText(NSString *key) {
     BOOL isKor = [[[NSLocale preferredLanguages] firstObject] hasPrefix:@"ko"];
     if ([key isEqualToString:@"T"]) {
-        return isKor ? @"YTBackgroundOnly" : @"YTBackgroundOnly";
+        return @"YTBackgroundOnly";
     }
     if ([key isEqualToString:@"D"]) {
         return isKor ? @"앱을 종료하거나 화면을 꺼도 오디오 재생을 유지하며, '동영상이 일시중지되었습니다. 이어서 시청하시겠습니까?' 시청 확인창을 차단합니다." : @"Allows audio to continue playing in the background and prevents the 'Video paused. Continue watching?' prompt.";
@@ -25,6 +46,11 @@ static NSString * loadText(NSString *key) {
 
 @interface YTSettingsGroupData : NSObject
 @property (nonatomic, assign, readonly) NSInteger type;
+- (instancetype)initWithGroupType:(NSInteger)type;
+@end
+
+@interface YTAppSettingsGroupPresentationData : NSObject
++ (NSArray *)orderedGroups;
 @end
 
 @interface YTSettingsSectionItem : NSObject
@@ -125,8 +151,9 @@ static NSString * loadText(NSString *key) {
     NSArray *baseOrder = %orig;
     NSMutableArray *modOrder = baseOrder ? [baseOrder mutableCopy] : [NSMutableArray array];
     if (![modOrder containsObject:@(kBGPSectionID)]) {
-        if (modOrder.count > 1) {
-            [modOrder insertObject:@(kBGPSectionID) atIndex:2];
+        NSUInteger generalIdx = [modOrder indexOfObject:@(1)];
+        if (generalIdx != NSNotFound) {
+            [modOrder insertObject:@(kBGPSectionID) atIndex:generalIdx + 1];
         } else {
             [modOrder addObject:@(kBGPSectionID)];
         }
@@ -136,13 +163,64 @@ static NSString * loadText(NSString *key) {
 %end
 
 
+%hook YTAppSettingsGroupPresentationData
++ (NSArray *)orderedGroups {
+    NSArray *groups = %orig;
+
+    if (isYouGroupSettingsActive()) {
+        return groups;
+    }
+
+    for (id item in groups) {
+        if (isTweakGroupItem(item)) {
+            return groups;
+        }
+    }
+
+    Class groupDataClass = %c(YTSettingsGroupData);
+    if (groupDataClass && [groupDataClass instancesRespondToSelector:@selector(initWithGroupType:)]) {
+        id customGroup = [[groupDataClass alloc] initWithGroupType:kTweakGroupID];
+        if (customGroup) {
+            NSMutableArray *modGroups = groups ? [groups mutableCopy] : [NSMutableArray array];
+            [modGroups insertObject:customGroup atIndex:0];
+            return modGroups.copy;
+        }
+    }
+    return groups;
+}
+%end
+
+
 %hook YTSettingsGroupData
-- (NSArray <NSNumber *> *)orderedCategories {
+- (NSString *)titleForSettingGroupType:(NSUInteger)type {
+    if (type == kTweakGroupID) {
+        NSString *origTitle = %orig;
+        if (origTitle && origTitle.length > 0) {
+            return origTitle;
+        }
+        return @"Tweaks";
+    }
+    return %orig;
+}
+
+- (NSArray <NSNumber *> *)orderedCategoriesForGroupType:(NSUInteger)type {
     NSArray *baseArr = %orig;
-    if (self.type == 2) {
+    if (type == kTweakGroupID) {
         NSMutableArray *modArr = baseArr ? [baseArr mutableCopy] : [NSMutableArray array];
         if (![modArr containsObject:@(kBGPSectionID)]) {
-            [modArr insertObject:@(kBGPSectionID) atIndex:0];
+            [modArr addObject:@(kBGPSectionID)];
+        }
+        return modArr.copy;
+    }
+    return baseArr;
+}
+
+- (NSArray <NSNumber *> *)orderedCategories {
+    NSArray *baseArr = %orig;
+    if (self.type == kTweakGroupID) {
+        NSMutableArray *modArr = baseArr ? [baseArr mutableCopy] : [NSMutableArray array];
+        if (![modArr containsObject:@(kBGPSectionID)]) {
+            [modArr addObject:@(kBGPSectionID)];
         }
         return modArr.copy;
     }
