@@ -8,5 +8,6 @@ TWEAK_NAME = YTBackgroundOnly
 
 YTBackgroundOnly_FILES = Tweak.x
 YTBackgroundOnly_CFLAGS = -fobjc-arc
+YTBackgroundOnly_FRAMEWORKS = UIKit Foundation MediaPlayer
 
 include $(THEOS_MAKE_PATH)/tweak.mk
