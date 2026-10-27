@@ -21,7 +21,7 @@ A lightweight iOS tweak for YouTube that enables continuous background playback 
 
 YTBackgroundOnly includes a native toggle directly inside YouTube's settings menu, allowing you to turn the tweak on or off at any time without needing third-party helper tweaks.
 
-- **Location:** Open YouTube > Tap your profile / gear icon > **Settings** > **Video and audio preferences**
+- **Location:** Open YouTube > Settings > **Tweaks** > **YTBackgroundOnly**
 - **Master Toggle:** Enabling the switch activates background playback and disables interruption prompts. Disabling it instantly restores pure stock YouTube behavior without restarting the app.
 - **Auto Localization:** The settings UI automatically adapts to your system language (supports both Korean and English).
 
