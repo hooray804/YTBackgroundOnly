@@ -3,12 +3,13 @@
 #import <MediaPlayer/MediaPlayer.h>
 #import <objc/runtime.h>
 #import <string.h>
+#import <math.h>
 
 static NSString * const kBGPStateKey = @"BGPToggleStatus";
 static NSString * const kBGPHideDIKey = @"BGPHideDIToggleStatus";
-static NSString * const kBGPSliderThicknessKey = @"BGPSliderThicknessPercent";
-static NSString * const kBGPSliderFullscreenOnlyKey = @"BGPSliderFullscreenOnly";
-static NSString * const kBGPSliderApplyShortsKey = @"BGPSliderApplyShorts";
+static NSString * const kBGPNormalSliderKey = @"BGPNormalSliderThicknessPercent";
+static NSString * const kBGPFullscreenSliderKey = @"BGPFullscreenSliderThicknessPercent";
+static NSString * const kBGPShortsSliderKey = @"BGPShortsSliderThicknessPercent";
 static const NSInteger kBGPSectionID = 2610;
 static const NSInteger kTweakGroupID = 'psyt';
 static const CGFloat kDefaultScrubberSize = 12.0;
@@ -17,30 +18,39 @@ static const CGFloat kYouTubeScrubberScale = 6.0;
 static const void * const kBGPBaseHeightKey = &kBGPBaseHeightKey;
 static const void * const kBGPAppliedHeightKey = &kBGPAppliedHeightKey;
 static const void * const kBGPModifiedTrackKey = &kBGPModifiedTrackKey;
+static const void * const kBGPModifiedContainerKey = &kBGPModifiedContainerKey;
 static const void * const kBGPModifiedDotKey = &kBGPModifiedDotKey;
 static const void * const kBGPWasFullscreenKey = &kBGPWasFullscreenKey;
 static const void * const kBGPCachedKindKey = &kBGPCachedKindKey;
+static const void * const kBGPRelayoutPendingKey = &kBGPRelayoutPendingKey;
 
 static BOOL gBGPState = NO;
 static BOOL gHideDIState = NO;
-static NSInteger gSliderThicknessPercent = 100;
-static BOOL gFullscreenOnly = NO;
-static BOOL gApplyToShorts = NO;
-static BOOL gHasModifiedSliderThickness = NO;
+static NSInteger gNormalSliderPercent = 100;
+static NSInteger gFullscreenSliderPercent = 100;
+static NSInteger gShortsSliderPercent = 100;
+static BOOL gHasModifiedSlider = NO;
+static BOOL gHasModifiedNormal = NO;
 static BOOL gApplyingTrackFrame = NO;
 
 typedef NS_ENUM(NSInteger, BGPViewContext) {
     BGPViewContextUnknown = 0,
     BGPViewContextNormalInline,
     BGPViewContextNormalFullscreen,
-    BGPViewContextShorts
+    BGPViewContextShorts,
+    BGPViewContextExcluded
 };
 
 typedef NS_ENUM(NSInteger, BGPCachedKind) {
     BGPCachedKindOverlay = 1,
     BGPCachedKindShorts = 2,
-    BGPCachedKindInline = 3
+    BGPCachedKindInline = 3,
+    BGPCachedKindExcluded = 4
 };
+
+static NSInteger sanitizeSliderPercent(NSInteger val) {
+    return (val >= 50 && val <= 400) ? val : 100;
+}
 
 static BOOL fetchBGPState() {
     return gBGPState;
@@ -50,30 +60,9 @@ static BOOL fetchHideDIState() {
     return gHideDIState;
 }
 
-static NSInteger fetchSliderThicknessPercent() {
-    return gSliderThicknessPercent >= 50 ? gSliderThicknessPercent : 100;
-}
-
-static CGFloat fetchSliderThicknessScale() {
-    return fetchSliderThicknessPercent() / 100.0;
-}
-
-static BOOL isThicknessActive() {
-    return fabs(fetchSliderThicknessScale() - 1.0) > 0.001;
-}
-
-static CGFloat fetchScrubberDotScale() {
-    CGFloat sliderScale = fetchSliderThicknessScale();
+static CGFloat scrubberScaleForSliderScale(CGFloat sliderScale) {
     if (fabs(sliderScale - 1.0) <= 0.001) return 1.0;
     return 1.0 + ((sliderScale - 1.0) * 0.5);
-}
-
-static BOOL fetchFullscreenOnlyState() {
-    return gFullscreenOnly;
-}
-
-static BOOL fetchApplyToShortsState() {
-    return gApplyToShorts;
 }
 
 static id safeGetObjectIvar(id obj, const char *ivarName) {
@@ -119,38 +108,27 @@ static NSString * loadText(NSString *key) {
         return isKor ? @"앱이 활성화되어 있거나 백그라운드에서 재생 중일 때 다이내믹 아일랜드에 미디어 플레이어를 표시하지 않습니다. 이 기능의 동작을 정확히 이해하신 경우에만 활성화해 주세요. (주의: 잠금 화면 미디어 플레이어에는 재생 중인 영상 정보가 빈 상태로 표시됩니다.)" : @"Hides the media player from the Dynamic Island during foreground and background playback. Only activate this feature if you fully understand its impact. (Note: The lock screen media player will appear blank)";
     }
     if ([key isEqualToString:@"T3"]) {
-        return isKor ? @"슬라이더 두께" : @"Slider thickness";
+        return isKor ? @"일반 화면 슬라이더 두께" : @"Regular slider thickness";
     }
     if ([key isEqualToString:@"D3"]) {
-        return isKor ? @"동영상 재생 바(슬라이더)의 두께 배율을 조절합니다." : @"Adjusts the thickness scale of the video player progress bar.";
+        return isKor ? @"일반 재생 화면(세로 화면 등)의 동영상 재생 바(슬라이더)와 재생 위치 점(스크러버)의 배율을 조절합니다." : @"Adjusts slider and scrubber scale in regular playback (portrait, miniplayer, etc.).";
     }
     if ([key isEqualToString:@"T4"]) {
-        return isKor ? @"전체 화면에서만 적용" : @"Apply in fullscreen only";
+        return isKor ? @"전체 화면 슬라이더 두께" : @"Fullscreen slider thickness";
     }
     if ([key isEqualToString:@"D4"]) {
-        return isKor ? @"일반 동영상 재생 시 전체 화면에서만 변경된 슬라이더 두께와 재생 위치 점(스크러버) 크기를 적용합니다." : @"Applies the custom slider thickness and scrubber size only in fullscreen for regular videos.";
+        return isKor ? @"전체 화면 재생 시의 동영상 재생 바(슬라이더)와 재생 위치 점(스크러버)의 배율을 조절합니다." : @"Adjusts slider and scrubber scale during fullscreen playback.";
     }
     if ([key isEqualToString:@"T5"]) {
-        return isKor ? @"Shorts에도 적용" : @"Apply to Shorts";
+        return isKor ? @"Shorts 슬라이더 두께" : @"Shorts slider thickness";
     }
     if ([key isEqualToString:@"D5"]) {
-        return isKor ? @"Shorts 재생 바(슬라이더)에도 변경된 슬라이더 두께와 재생 위치 점(스크러버) 크기를 적용합니다. (전체 화면에서만 적용 옵션과 별개로 작동합니다.)" : @"Applies the custom slider thickness and scrubber size to Shorts as well. (Works independently from the fullscreen-only option.)";
+        return isKor ? @"Shorts 재생 시의 동영상 재생 바(슬라이더)와 재생 위치 점(스크러버)의 배율을 조절합니다." : @"Adjusts slider and scrubber scale during Shorts playback.";
     }
     if ([key isEqualToString:@"DEFAULT"]) {
-        return isKor ? @"1x (기본값)" : @"1x (Default)";
+        return isKor ? @"1x (비활성화)" : @"1x (Disabled)";
     }
     return @"";
-}
-
-static CGRect scaleBarFrameVertically(CGRect frame, CGFloat scale) {
-    if (fabs(scale - 1.0) <= 0.001) return frame;
-    if (frame.size.height > 0.0 && frame.size.height <= 12.0) {
-        CGFloat midY = CGRectGetMidY(frame);
-        CGFloat newHeight = frame.size.height * scale;
-        frame.origin.y = midY - (newHeight / 2.0);
-        frame.size.height = newHeight;
-    }
-    return frame;
 }
 
 static void updateScrubberCircleSize(UIView *scrubberCircle, CGFloat scale) {
@@ -173,7 +151,13 @@ static void applyScrubberCircleScaleIfNeeded(UIView *scrubberCircle, CGFloat sca
     BOOL wasModified = [objc_getAssociatedObject(scrubberCircle, kBGPModifiedDotKey) boolValue];
     if (!isScaled && !wasModified) return;
     updateScrubberCircleSize(scrubberCircle, isScaled ? scale : 1.0);
-    objc_setAssociatedObject(scrubberCircle, kBGPModifiedDotKey, isScaled ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (isScaled) {
+        if (!wasModified) {
+            objc_setAssociatedObject(scrubberCircle, kBGPModifiedDotKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    } else {
+        objc_setAssociatedObject(scrubberCircle, kBGPModifiedDotKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
 }
 
 @interface YTIIcon : NSObject
@@ -226,6 +210,9 @@ static void applyScrubberCircleScaleIfNeeded(UIView *scrubberCircle, CGFloat sca
 - (id)parentResponder;
 @end
 
+@interface YTPlayerViewController : UIViewController
+@end
+
 @interface YTMainAppVideoPlayerOverlayView : UIView
 @end
 
@@ -257,8 +244,12 @@ static void applyScrubberCircleScaleIfNeeded(UIView *scrubberCircle, CGFloat sca
 @interface YTWatchFloatingMiniplayerProgressBarView : UIView
 @end
 
-@interface YTInlineMutedPlaybackScrubbingSlider : UISlider
-@end
+static BOOL isExcludedAncestorClass(Class cls) {
+    if (!cls) return NO;
+    const char *name = class_getName(cls);
+    if (!name) return NO;
+    return strstr(name, "InlineMutedPlayback") != NULL;
+}
 
 static BOOL isShortsAncestorClass(Class cls) {
     if (!cls) return NO;
@@ -279,10 +270,13 @@ static BGPViewContext detectViewContext(UIView *view) {
     NSNumber *cachedKind = objc_getAssociatedObject(view, kBGPCachedKindKey);
     if (cachedKind) {
         NSInteger kind = cachedKind.integerValue;
+        if (kind == BGPCachedKindExcluded) return BGPViewContextExcluded;
         if (kind == BGPCachedKindShorts) return BGPViewContextShorts;
         if (kind == BGPCachedKindInline) return BGPViewContextNormalInline;
         if (kind == BGPCachedKindOverlay) {
-            if (!fetchFullscreenOnlyState()) return BGPViewContextNormalInline;
+            if (gNormalSliderPercent == gFullscreenSliderPercent) {
+                return BGPViewContextNormalInline;
+            }
             CGFloat windowH = CGRectGetHeight(view.window.bounds);
             if (windowH <= 0.0) return BGPViewContextNormalInline;
             UIView *node = view.superview;
@@ -308,6 +302,10 @@ static BGPViewContext detectViewContext(UIView *view) {
             }
             return BGPViewContextNormalInline;
         }
+        if (isExcludedAncestorClass(node.class)) {
+            objc_setAssociatedObject(view, kBGPCachedKindKey, @(BGPCachedKindExcluded), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            return BGPViewContextExcluded;
+        }
         if (isShortsAncestorClass(node.class)) {
             objc_setAssociatedObject(view, kBGPCachedKindKey, @(BGPCachedKindShorts), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             return BGPViewContextShorts;
@@ -319,35 +317,38 @@ static BGPViewContext detectViewContext(UIView *view) {
     return BGPViewContextNormalInline;
 }
 
-static BOOL shouldApplyScaleForView(UIView *view) {
-    if (!isThicknessActive()) return NO;
-    if (!fetchFullscreenOnlyState() && fetchApplyToShortsState()) return YES;
+static NSInteger effectiveSliderPercentForView(UIView *view) {
+    if (gNormalSliderPercent == 100 &&
+        gFullscreenSliderPercent == 100 &&
+        gShortsSliderPercent == 100) {
+        return 100;
+    }
     BGPViewContext ctx = detectViewContext(view);
-    if (ctx == BGPViewContextShorts) {
-        return fetchApplyToShortsState();
-    }
-    if (ctx == BGPViewContextNormalFullscreen) {
-        return YES;
-    }
-    if (ctx == BGPViewContextNormalInline) {
-        return !fetchFullscreenOnlyState();
-    }
-    return NO;
+    if (ctx == BGPViewContextNormalFullscreen) return gFullscreenSliderPercent;
+    if (ctx == BGPViewContextShorts) return gShortsSliderPercent;
+    if (ctx == BGPViewContextNormalInline) return gNormalSliderPercent;
+    return 100;
 }
 
 static CGFloat effectiveSliderThicknessScaleForView(UIView *view) {
-    return shouldApplyScaleForView(view) ? fetchSliderThicknessScale() : 1.0;
+    NSInteger percent = effectiveSliderPercentForView(view);
+    return percent == 100 ? 1.0 : (percent / 100.0);
 }
 
 static CGFloat effectiveScrubberDotScaleForView(UIView *view) {
-    return shouldApplyScaleForView(view) ? fetchScrubberDotScale() : 1.0;
+    return scrubberScaleForSliderScale(effectiveSliderThicknessScaleForView(view));
 }
 
 static CGRect scaleTrackFrameForView(UIView *view, CGRect frame) {
-    if (!view || !gHasModifiedSliderThickness || gApplyingTrackFrame) return frame;
+    if (!view || !gHasModifiedSlider || gApplyingTrackFrame) return frame;
 
     CGFloat incomingH = frame.size.height;
     if (incomingH <= 0.0) return frame;
+
+    CGFloat scale = effectiveSliderThicknessScaleForView(view);
+    BOOL isScaled = fabs(scale - 1.0) > 0.001;
+    BOOL wasModified = [objc_getAssociatedObject(view, kBGPModifiedTrackKey) boolValue];
+    if (!isScaled && !wasModified) return frame;
 
     NSNumber *baseNum = objc_getAssociatedObject(view, kBGPBaseHeightKey);
     NSNumber *appliedNum = objc_getAssociatedObject(view, kBGPAppliedHeightKey);
@@ -360,26 +361,28 @@ static CGRect scaleTrackFrameForView(UIView *view, CGRect frame) {
         baseHeight = baseNum.doubleValue;
     } else if (incomingH <= 12.0) {
         baseHeight = incomingH;
-        objc_setAssociatedObject(view, kBGPBaseHeightKey, @(baseHeight), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (!baseNum || fabs(baseNum.doubleValue - baseHeight) >= 0.05) {
+            objc_setAssociatedObject(view, kBGPBaseHeightKey, @(baseHeight), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
     } else {
         return frame;
     }
 
-    CGFloat scale = effectiveSliderThicknessScaleForView(view);
-    BOOL isScaled = fabs(scale - 1.0) > 0.001;
-    BOOL wasModified = [objc_getAssociatedObject(view, kBGPModifiedTrackKey) boolValue];
     CGFloat targetHeight = isScaled ? (baseHeight * scale) : baseHeight;
-
     if (isScaled) {
-        objc_setAssociatedObject(view, kBGPAppliedHeightKey, @(targetHeight), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(view, kBGPModifiedTrackKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (!appliedNum || fabs(appliedNum.doubleValue - targetHeight) >= 0.05) {
+            objc_setAssociatedObject(view, kBGPAppliedHeightKey, @(targetHeight), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if (!wasModified) {
+            objc_setAssociatedObject(view, kBGPModifiedTrackKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
     } else {
-        objc_setAssociatedObject(view, kBGPAppliedHeightKey, nil, OBJC_ASSOCIATION_ASSIGN);
-        if (wasModified) {
-            objc_setAssociatedObject(view, kBGPModifiedTrackKey, nil, OBJC_ASSOCIATION_ASSIGN);
-            if (view.layer.cornerRadius > 0.0) {
-                view.layer.cornerRadius = targetHeight / 2.0;
-            }
+        if (appliedNum) {
+            objc_setAssociatedObject(view, kBGPAppliedHeightKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        }
+        objc_setAssociatedObject(view, kBGPModifiedTrackKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        if (view.layer.cornerRadius > 0.0) {
+            view.layer.cornerRadius = targetHeight / 2.0;
         }
     }
 
@@ -392,7 +395,13 @@ static CGRect scaleTrackFrameForView(UIView *view, CGRect frame) {
 }
 
 static void syncTrackViewThickness(UIView *view) {
-    if (!view || !gHasModifiedSliderThickness) return;
+    if (!view || !gHasModifiedSlider) return;
+
+    CGFloat scale = effectiveSliderThicknessScaleForView(view);
+    BOOL isScaled = fabs(scale - 1.0) > 0.001;
+    BOOL wasModified = [objc_getAssociatedObject(view, kBGPModifiedTrackKey) boolValue];
+    if (!isScaled && !wasModified) return;
+
     CGRect frame = view.frame;
     if (frame.size.height <= 0.0) return;
 
@@ -407,17 +416,19 @@ static void syncTrackViewThickness(UIView *view) {
         return;
     }
 
-    CGFloat scale = effectiveSliderThicknessScaleForView(view);
-    BOOL isScaled = fabs(scale - 1.0) > 0.001;
-    BOOL wasModified = [objc_getAssociatedObject(view, kBGPModifiedTrackKey) boolValue];
-    if (!isScaled && !wasModified) return;
-
+    NSNumber *appliedNum = objc_getAssociatedObject(view, kBGPAppliedHeightKey);
     CGFloat targetHeight = isScaled ? (baseHeight * scale) : baseHeight;
     if (isScaled) {
-        objc_setAssociatedObject(view, kBGPAppliedHeightKey, @(targetHeight), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(view, kBGPModifiedTrackKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (!appliedNum || fabs(appliedNum.doubleValue - targetHeight) >= 0.05) {
+            objc_setAssociatedObject(view, kBGPAppliedHeightKey, @(targetHeight), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if (!wasModified) {
+            objc_setAssociatedObject(view, kBGPModifiedTrackKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
     } else {
-        objc_setAssociatedObject(view, kBGPAppliedHeightKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        if (appliedNum) {
+            objc_setAssociatedObject(view, kBGPAppliedHeightKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        }
         objc_setAssociatedObject(view, kBGPModifiedTrackKey, nil, OBJC_ASSOCIATION_ASSIGN);
     }
 
@@ -430,7 +441,10 @@ static void syncTrackViewThickness(UIView *view) {
         gApplyingTrackFrame = NO;
     }
     if (view.layer.cornerRadius > 0.0) {
-        view.layer.cornerRadius = view.bounds.size.height / 2.0;
+        CGFloat expectedRadius = view.bounds.size.height / 2.0;
+        if (fabs(view.layer.cornerRadius - expectedRadius) > 0.05) {
+            view.layer.cornerRadius = expectedRadius;
+        }
     }
 }
 
@@ -455,6 +469,21 @@ static void forceDecorationScaleRefresh(YTPlayerBarScrubberDotDecorationView *de
 
 static void relayoutVisiblePlayerBars(UIView *view, NSUInteger depth) {
     if (!view || depth > 20) return;
+
+    Class overlayClass = %c(YTMainAppVideoPlayerOverlayView);
+    if (overlayClass && [view isKindOfClass:overlayClass]) {
+        if (view.window) {
+            CGFloat windowH = CGRectGetHeight(view.window.bounds);
+            BOOL isFull = (windowH > 0.0 && CGRectGetHeight(view.bounds) >= windowH * 0.82);
+            NSNumber *prevFull = objc_getAssociatedObject(view, kBGPWasFullscreenKey);
+            if (!prevFull || prevFull.boolValue != isFull) {
+                objc_setAssociatedObject(view, kBGPWasFullscreenKey, @(isFull), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+        } else if (objc_getAssociatedObject(view, kBGPWasFullscreenKey)) {
+            objc_setAssociatedObject(view, kBGPWasFullscreenKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        }
+    }
+
     Class rectClass = %c(YTPlayerBarRectangleDecorationView);
     Class progressClass = %c(YTPlayerBarProgressDecorationView);
     Class segClass = %c(YTPlayerBarSegmentView);
@@ -470,11 +499,22 @@ static void relayoutVisiblePlayerBars(UIView *view, NSUInteger depth) {
 
     const char *rawName = class_getName(view.class);
     if (rawName && (strstr(rawName, "PlayerBar") != NULL || strstr(rawName, "MiniplayerProgressBar") != NULL)) {
-        if (fabs(effectiveSliderThicknessScaleForView(view) - 1.0) > 0.001) {
-            view.clipsToBounds = NO;
+        BOOL isScaled = (effectiveSliderPercentForView(view) != 100);
+        BOOL wasModified = [objc_getAssociatedObject(view, kBGPModifiedContainerKey) boolValue];
+        if (isScaled) {
+            if (view.clipsToBounds) {
+                view.clipsToBounds = NO;
+            }
+            if (!wasModified) {
+                objc_setAssociatedObject(view, kBGPModifiedContainerKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            [view setNeedsLayout];
+            [view setNeedsDisplay];
+        } else if (wasModified) {
+            objc_setAssociatedObject(view, kBGPModifiedContainerKey, nil, OBJC_ASSOCIATION_ASSIGN);
+            [view setNeedsLayout];
+            [view setNeedsDisplay];
         }
-        [view setNeedsLayout];
-        [view setNeedsDisplay];
         UIView *scrubberCircle = safeGetObjectIvar(view, "_scrubberCircle");
         if (scrubberCircle) {
             applyScrubberCircleScaleIfNeeded(scrubberCircle, effectiveScrubberDotScaleForView(view));
@@ -496,6 +536,32 @@ static void relayoutVisiblePlayerBars(UIView *view, NSUInteger depth) {
     }
 }
 
+static void schedulePlayerBarRelayout(UIView *rootView) {
+    if (!rootView) return;
+    if ([objc_getAssociatedObject(rootView, kBGPRelayoutPendingKey) boolValue]) return;
+    objc_setAssociatedObject(rootView, kBGPRelayoutPendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    __weak UIView *weakRoot = rootView;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *strongRoot = weakRoot;
+        if (!strongRoot) return;
+        objc_setAssociatedObject(strongRoot, kBGPRelayoutPendingKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        if (strongRoot.window) {
+            relayoutVisiblePlayerBars(strongRoot, 0);
+        }
+    });
+}
+
+static UIView *findPlayerOverlayView(UIView *view, NSUInteger depth) {
+    if (!view || depth > 5) return nil;
+    Class overlayClass = %c(YTMainAppVideoPlayerOverlayView);
+    if (overlayClass && [view isKindOfClass:overlayClass]) return view;
+    for (UIView *sub in view.subviews) {
+        UIView *found = findPlayerOverlayView(sub, depth + 1);
+        if (found) return found;
+    }
+    return nil;
+}
+
 static void refreshAllPlayerBars() {
     for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if (![scene isKindOfClass:[UIWindowScene class]]) continue;
@@ -503,6 +569,73 @@ static void refreshAllPlayerBars() {
             relayoutVisiblePlayerBars(window, 0);
         }
     }
+}
+
+static id buildThicknessPickerItem(NSString *title,
+                                   NSString *desc,
+                                   NSArray<NSNumber *> *presets,
+                                   NSString *defaultsKey,
+                                   NSInteger *percentPtr,
+                                   BOOL *contextModifiedPtr,
+                                   YTSettingsSectionItemManager *manager,
+                                   id targetDelegate) {
+    __weak YTSettingsSectionItemManager *weakManager = manager;
+    __weak id weakDelegate = targetDelegate;
+    return [%c(YTSettingsSectionItem) itemWithTitle:title
+        titleDescription:desc
+        accessibilityIdentifier:nil
+        detailTextBlock:^NSString *() {
+            NSInteger percent = *percentPtr;
+            if (percent == 100) return loadText(@"DEFAULT");
+            return [NSString stringWithFormat:@"%.3gx", percent / 100.0];
+        }
+        selectBlock:^BOOL (id cell, NSUInteger arg1) {
+            id strongDelegate = weakDelegate;
+            YTSettingsSectionItemManager *strongManager = weakManager;
+            NSInteger currentPercent = *percentPtr;
+            NSUInteger selectedIndex = 0;
+            NSMutableArray *rows = [NSMutableArray array];
+
+            for (NSUInteger i = 0; i < presets.count; i++) {
+                NSInteger val = presets[i].integerValue;
+                if (val == currentPercent) selectedIndex = i;
+                NSString *rowTitle = (val == 100)
+                    ? loadText(@"DEFAULT")
+                    : [NSString stringWithFormat:@"%.3gx", val / 100.0];
+
+                id rowItem = [%c(YTSettingsSectionItem) checkmarkItemWithTitle:rowTitle
+                    titleDescription:nil
+                    selectBlock:^BOOL (id rowCell, NSUInteger rowIdx) {
+                        *percentPtr = val;
+                        if (val != 100) {
+                            gHasModifiedSlider = YES;
+                            if (contextModifiedPtr) *contextModifiedPtr = YES;
+                        }
+                        [[NSUserDefaults standardUserDefaults] setInteger:val forKey:defaultsKey];
+                        if (gHasModifiedSlider) {
+                            refreshAllPlayerBars();
+                        }
+                        id reloadTarget = weakDelegate;
+                        if ([reloadTarget respondsToSelector:@selector(reloadData)]) {
+                            [reloadTarget reloadData];
+                        }
+                        return YES;
+                    }];
+                [rows addObject:rowItem];
+            }
+
+            Class pickerClass = %c(YTSettingsPickerViewController);
+            if (pickerClass && [strongDelegate respondsToSelector:@selector(pushViewController:)]) {
+                id parentResp = [strongManager respondsToSelector:@selector(parentResponder)] ? [strongManager parentResponder] : nil;
+                UIViewController *picker = [[pickerClass alloc] initWithNavTitle:title
+                    pickerSectionTitle:nil
+                    rows:rows
+                    selectedItemIndex:selectedIndex
+                    parentResponder:parentResp];
+                [strongDelegate pushViewController:picker];
+            }
+            return YES;
+        }];
 }
 
 %hook MLVideo
@@ -573,13 +706,13 @@ static void refreshAllPlayerBars() {
 %hook YTMainAppVideoPlayerOverlayView
 - (void)layoutSubviews {
     %orig;
-    if (!gHasModifiedSliderThickness || !fetchFullscreenOnlyState() || !self.window) return;
+    if (!gHasModifiedSlider || gNormalSliderPercent == gFullscreenSliderPercent || !self.window) return;
     CGFloat windowH = CGRectGetHeight(self.window.bounds);
     BOOL isFull = (windowH > 0.0 && CGRectGetHeight(self.bounds) >= windowH * 0.82);
     NSNumber *prevFull = objc_getAssociatedObject(self, kBGPWasFullscreenKey);
     if (!prevFull || prevFull.boolValue != isFull) {
         objc_setAssociatedObject(self, kBGPWasFullscreenKey, @(isFull), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        relayoutVisiblePlayerBars(self, 0);
+        schedulePlayerBarRelayout(self);
     }
 }
 %end
@@ -587,9 +720,26 @@ static void refreshAllPlayerBars() {
 %hook YTPlayerViewController
 - (void)setPlayerViewLayout:(NSInteger)layout {
     %orig;
-    if (gHasModifiedSliderThickness && fetchFullscreenOnlyState()) {
+    if (gHasModifiedSlider && gNormalSliderPercent != gFullscreenSliderPercent) {
+        __weak YTPlayerViewController *weakSelf = self;
         dispatch_async(dispatch_get_main_queue(), ^{
-            refreshAllPlayerBars();
+            YTPlayerViewController *strongSelf = weakSelf;
+            if (!strongSelf || !strongSelf.isViewLoaded) return;
+            UIView *rootView = strongSelf.view;
+            if (!rootView.window) return;
+            UIView *overlay = findPlayerOverlayView(rootView, 0);
+            if (overlay) {
+                CGFloat windowH = CGRectGetHeight(overlay.window.bounds);
+                BOOL isFull = (windowH > 0.0 && CGRectGetHeight(overlay.bounds) >= windowH * 0.82);
+                NSNumber *prevFull = objc_getAssociatedObject(overlay, kBGPWasFullscreenKey);
+                if (prevFull && prevFull.boolValue == isFull) {
+                    return;
+                }
+                objc_setAssociatedObject(overlay, kBGPWasFullscreenKey, @(isFull), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                schedulePlayerBarRelayout(overlay);
+                return;
+            }
+            schedulePlayerBarRelayout(rootView);
         });
     }
 }
@@ -597,7 +747,7 @@ static void refreshAllPlayerBars() {
 
 %hook YTPlayerBarRectangleDecorationView
 - (void)setFrame:(CGRect)frame {
-    if (!gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) {
         %orig;
         return;
     }
@@ -606,25 +756,31 @@ static void refreshAllPlayerBars() {
 
 - (void)didMoveToWindow {
     %orig;
-    objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    if (self.window && gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) return;
+    if (objc_getAssociatedObject(self, kBGPCachedKindKey)) {
+        objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+    if (self.window) {
         syncTrackViewThickness(self);
     }
 }
 
 - (void)layoutSubviews {
     %orig;
-    if (gHasModifiedSliderThickness &&
+    if (gHasModifiedSlider &&
         self.layer.cornerRadius > 0.0 &&
         fabs(effectiveSliderThicknessScaleForView(self) - 1.0) > 0.001) {
-        self.layer.cornerRadius = self.bounds.size.height / 2.0;
+        CGFloat expectedRadius = self.bounds.size.height / 2.0;
+        if (fabs(self.layer.cornerRadius - expectedRadius) > 0.05) {
+            self.layer.cornerRadius = expectedRadius;
+        }
     }
 }
 %end
 
 %hook YTPlayerBarProgressDecorationView
 - (void)setFrame:(CGRect)frame {
-    if (!gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) {
         %orig;
         return;
     }
@@ -633,25 +789,31 @@ static void refreshAllPlayerBars() {
 
 - (void)didMoveToWindow {
     %orig;
-    objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    if (self.window && gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) return;
+    if (objc_getAssociatedObject(self, kBGPCachedKindKey)) {
+        objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+    if (self.window) {
         syncTrackViewThickness(self);
     }
 }
 
 - (void)layoutSubviews {
     %orig;
-    if (gHasModifiedSliderThickness &&
+    if (gHasModifiedSlider &&
         self.layer.cornerRadius > 0.0 &&
         fabs(effectiveSliderThicknessScaleForView(self) - 1.0) > 0.001) {
-        self.layer.cornerRadius = self.bounds.size.height / 2.0;
+        CGFloat expectedRadius = self.bounds.size.height / 2.0;
+        if (fabs(self.layer.cornerRadius - expectedRadius) > 0.05) {
+            self.layer.cornerRadius = expectedRadius;
+        }
     }
 }
 %end
 
 %hook YTPlayerBarSegmentView
 - (void)setFrame:(CGRect)frame {
-    if (!gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) {
         %orig;
         return;
     }
@@ -660,8 +822,11 @@ static void refreshAllPlayerBars() {
 
 - (void)didMoveToWindow {
     %orig;
-    objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    if (self.window && gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) return;
+    if (objc_getAssociatedObject(self, kBGPCachedKindKey)) {
+        objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+    if (self.window) {
         syncTrackViewThickness(self);
     }
 }
@@ -670,7 +835,7 @@ static void refreshAllPlayerBars() {
 %hook YTPlayerBarScrubberDotDecorationView
 - (id)initWithModel:(id)model {
     self = %orig;
-    if (self && gHasModifiedSliderThickness) {
+    if (self && gHasModifiedSlider) {
         applyScrubberCircleScaleIfNeeded(safeGetObjectIvar(self, "_defaultScrubberDot"), effectiveScrubberDotScaleForView(self));
     }
     return self;
@@ -678,8 +843,11 @@ static void refreshAllPlayerBars() {
 
 - (void)didMoveToWindow {
     %orig;
-    objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    if (self.window && gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) return;
+    if (objc_getAssociatedObject(self, kBGPCachedKindKey)) {
+        objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+    if (self.window) {
         CGFloat dotScale = effectiveScrubberDotScaleForView(self);
         applyScrubberCircleScaleIfNeeded(safeGetObjectIvar(self, "_defaultScrubberDot"), dotScale);
         BOOL isScaled = fabs(dotScale - 1.0) > 0.001;
@@ -688,7 +856,7 @@ static void refreshAllPlayerBars() {
             __weak YTPlayerBarScrubberDotDecorationView *weakSelf = self;
             dispatch_async(dispatch_get_main_queue(), ^{
                 YTPlayerBarScrubberDotDecorationView *strongSelf = weakSelf;
-                if (strongSelf.window) {
+                if (strongSelf && strongSelf.window) {
                     forceDecorationScaleRefresh(strongSelf);
                 }
             });
@@ -699,15 +867,17 @@ static void refreshAllPlayerBars() {
 
 %hook YTPlayerBarScrubberDotDecorationViewV2
 - (void)transformScrubberScale:(CGFloat)scale {
-    if (!gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) {
         %orig;
         return;
     }
     CGFloat dotScale = effectiveScrubberDotScaleForView(self);
     if (fabs(dotScale - 1.0) > 0.001) {
-        objc_setAssociatedObject(self, kBGPModifiedDotKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (!objc_getAssociatedObject(self, kBGPModifiedDotKey)) {
+            objc_setAssociatedObject(self, kBGPModifiedDotKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
         scale *= dotScale;
-    } else {
+    } else if (objc_getAssociatedObject(self, kBGPModifiedDotKey)) {
         objc_setAssociatedObject(self, kBGPModifiedDotKey, nil, OBJC_ASSOCIATION_ASSIGN);
     }
     %orig(scale);
@@ -717,7 +887,7 @@ static void refreshAllPlayerBars() {
 %hook YTModularPlayerBarView
 - (id)initWithModel:(id)model delegate:(id)delegate {
     self = %orig;
-    if (self && gHasModifiedSliderThickness) {
+    if (self && gHasModifiedSlider) {
         applyScrubberCircleScaleIfNeeded(safeGetObjectIvar(self, "_scrubberCircle"), effectiveScrubberDotScaleForView(self));
     }
     return self;
@@ -725,24 +895,30 @@ static void refreshAllPlayerBars() {
 
 - (void)didMoveToWindow {
     %orig;
-    objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    if (self.window && gHasModifiedSliderThickness) {
-        __weak UIView *weakSelf = self;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIView *strongSelf = weakSelf;
-            if (strongSelf.window) {
-                relayoutVisiblePlayerBars(strongSelf, 0);
-            }
-        });
+    if (!gHasModifiedSlider) return;
+    if (objc_getAssociatedObject(self, kBGPCachedKindKey)) {
+        objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+    if (self.window) {
+        BOOL isScaled = (effectiveSliderPercentForView(self) != 100);
+        BOOL wasModified = [objc_getAssociatedObject(self, kBGPModifiedContainerKey) boolValue];
+        if (isScaled || wasModified) {
+            schedulePlayerBarRelayout(self);
+        }
     }
 }
 
 - (void)layoutSubviews {
     %orig;
-    if (!gHasModifiedSliderThickness) return;
+    if (!gHasModifiedSlider) return;
     if (fabs(effectiveSliderThicknessScaleForView(self) - 1.0) <= 0.001) return;
 
-    self.clipsToBounds = NO;
+    if (self.clipsToBounds) {
+        self.clipsToBounds = NO;
+    }
+    if (!objc_getAssociatedObject(self, kBGPModifiedContainerKey)) {
+        objc_setAssociatedObject(self, kBGPModifiedContainerKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 
     UIView *scrubberDot = safeGetObjectIvar(self, "_scrubberCircle");
     if (!scrubberDot) {
@@ -764,7 +940,7 @@ static void refreshAllPlayerBars() {
 %hook YTSegmentableInlinePlayerBarView
 - (id)init {
     self = %orig;
-    if (self && gHasModifiedSliderThickness) {
+    if (self && gHasModifiedSlider) {
         applyScrubberCircleScaleIfNeeded(safeGetObjectIvar(self, "_scrubberCircle"), effectiveScrubberDotScaleForView(self));
     }
     return self;
@@ -772,8 +948,11 @@ static void refreshAllPlayerBars() {
 
 - (void)didMoveToWindow {
     %orig;
-    objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    if (self.window && gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) return;
+    if (objc_getAssociatedObject(self, kBGPCachedKindKey)) {
+        objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+    if (self.window) {
         applyScrubberCircleScaleIfNeeded(safeGetObjectIvar(self, "_scrubberCircle"), effectiveScrubberDotScaleForView(self));
     }
 }
@@ -782,7 +961,7 @@ static void refreshAllPlayerBars() {
 %hook YTInlinePlayerBarView
 - (id)init {
     self = %orig;
-    if (self && gHasModifiedSliderThickness) {
+    if (self && gHasModifiedSlider) {
         applyScrubberCircleScaleIfNeeded(safeGetObjectIvar(self, "_scrubberCircle"), effectiveScrubberDotScaleForView(self));
     }
     return self;
@@ -790,32 +969,39 @@ static void refreshAllPlayerBars() {
 
 - (void)didMoveToWindow {
     %orig;
-    objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    if (self.window && gHasModifiedSliderThickness) {
+    if (!gHasModifiedSlider) return;
+    if (objc_getAssociatedObject(self, kBGPCachedKindKey)) {
+        objc_setAssociatedObject(self, kBGPCachedKindKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    }
+    if (self.window) {
         applyScrubberCircleScaleIfNeeded(safeGetObjectIvar(self, "_scrubberCircle"), effectiveScrubberDotScaleForView(self));
     }
 }
 
 - (void)layoutSubviews {
     %orig;
-    if (!gHasModifiedSliderThickness) return;
-    CGFloat scale = effectiveSliderThicknessScaleForView(self);
-    if (fabs(scale - 1.0) <= 0.001) return;
-
-    self.clipsToBounds = NO;
+    if (!gHasModifiedSlider) return;
     UIView *playingProgress = safeGetObjectIvar(self, "_playingProgress");
-    if ([playingProgress isKindOfClass:[UIView class]]) {
-        CGRect scaled = scaleTrackFrameForView(playingProgress, playingProgress.frame);
-        if (!CGRectEqualToRect(scaled, playingProgress.frame)) {
-            playingProgress.frame = scaled;
-        }
+    if (![playingProgress isKindOfClass:[UIView class]]) return;
+
+    CGFloat scale = effectiveSliderThicknessScaleForView(self);
+    BOOL isScaled = fabs(scale - 1.0) > 0.001;
+    BOOL wasModified = [objc_getAssociatedObject(playingProgress, kBGPModifiedTrackKey) boolValue];
+    if (!isScaled && !wasModified) return;
+
+    if (isScaled && self.clipsToBounds) {
+        self.clipsToBounds = NO;
+    }
+    CGRect scaled = scaleTrackFrameForView(playingProgress, playingProgress.frame);
+    if (!CGRectEqualToRect(scaled, playingProgress.frame)) {
+        playingProgress.frame = scaled;
     }
 }
 %end
 
 %hook YTWatchFloatingMiniplayerProgressBarView
 - (void)setFrame:(CGRect)frame {
-    if (!gHasModifiedSliderThickness) {
+    if (!gHasModifiedNormal) {
         %orig;
         return;
     }
@@ -824,48 +1010,9 @@ static void refreshAllPlayerBars() {
 
 - (void)didMoveToWindow {
     %orig;
-    if (self.window && gHasModifiedSliderThickness) {
+    if (self.window && gHasModifiedNormal) {
         syncTrackViewThickness(self);
     }
-}
-%end
-
-%hook YTInlineMutedPlaybackScrubbingSlider
-- (CGRect)trackRectForBounds:(CGRect)bounds {
-    CGRect rect = %orig;
-    if (!gHasModifiedSliderThickness || fetchFullscreenOnlyState() || ![self.accessibilityIdentifier isEqualToString:@"id.player.scrubber.slider"]) {
-        return rect;
-    }
-    return scaleBarFrameVertically(rect, fetchSliderThicknessScale());
-}
-
-- (void)setThumbImage:(UIImage *)image forState:(UIControlState)state {
-    if (!gHasModifiedSliderThickness) {
-        %orig;
-        return;
-    }
-    CGFloat scale = fetchFullscreenOnlyState() ? 1.0 : fetchScrubberDotScale();
-    if (!image || fabs(scale - 1.0) <= 0.001 || ![self.accessibilityIdentifier isEqualToString:@"id.player.scrubber.slider"]) {
-        %orig;
-        return;
-    }
-    BOOL isTransparent = NO;
-    @try {
-        isTransparent = [[image.imageAsset valueForKey:@"assetName"] isEqualToString:@"transparent"];
-    } @catch (id ex) {}
-    if (isTransparent) {
-        %orig;
-        return;
-    }
-
-    CGSize newSize = CGSizeMake(image.size.width * scale, image.size.height * scale);
-    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
-    format.scale = image.scale;
-    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:newSize format:format];
-    UIImage *scaledImage = [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
-        [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
-    }];
-    %orig(scaledImage, state);
 }
 %end
 
@@ -973,91 +1120,12 @@ static void refreshAllPlayerBars() {
         settingItemId:1];
     [uiItems addObject:diSwitch];
 
-    NSArray<NSNumber *> *presets = @[@50, @100, @125, @150, @200, @250, @300, @400];
-    NSString *thicknessTitle = loadText(@"T3");
+    NSArray<NSNumber *> *compactPresets = @[@50, @75, @100, @125, @150, @200, @250];
+    NSArray<NSNumber *> *fullscreenPresets = @[@50, @75, @100, @125, @150, @200, @250, @300, @400];
 
-    id thicknessItem = [%c(YTSettingsSectionItem) itemWithTitle:thicknessTitle
-        titleDescription:loadText(@"D3")
-        accessibilityIdentifier:nil
-        detailTextBlock:^NSString *() {
-            NSInteger percent = fetchSliderThicknessPercent();
-            if (percent == 100) return loadText(@"DEFAULT");
-            return [NSString stringWithFormat:@"%.3gx", percent / 100.0];
-        }
-        selectBlock:^BOOL (id cell, NSUInteger arg1) {
-            NSInteger currentPercent = fetchSliderThicknessPercent();
-            NSUInteger selectedIndex = 0;
-            NSMutableArray *rows = [NSMutableArray array];
-
-            for (NSUInteger i = 0; i < presets.count; i++) {
-                NSInteger val = presets[i].integerValue;
-                if (val == currentPercent) selectedIndex = i;
-                NSString *rowTitle = (val == 100)
-                    ? loadText(@"DEFAULT")
-                    : [NSString stringWithFormat:@"%.3gx", val / 100.0];
-
-                id rowItem = [%c(YTSettingsSectionItem) checkmarkItemWithTitle:rowTitle
-                    titleDescription:nil
-                    selectBlock:^BOOL (id rowCell, NSUInteger rowIdx) {
-                        gSliderThicknessPercent = val;
-                        if (val != 100) {
-                            gHasModifiedSliderThickness = YES;
-                        }
-                        [[NSUserDefaults standardUserDefaults] setInteger:val forKey:kBGPSliderThicknessKey];
-                        if (gHasModifiedSliderThickness) {
-                            refreshAllPlayerBars();
-                        }
-                        if ([targetDelegate respondsToSelector:@selector(reloadData)]) {
-                            [targetDelegate reloadData];
-                        }
-                        return YES;
-                    }];
-                [rows addObject:rowItem];
-            }
-
-            Class pickerClass = %c(YTSettingsPickerViewController);
-            if (pickerClass && [targetDelegate respondsToSelector:@selector(pushViewController:)]) {
-                id parentResp = [self respondsToSelector:@selector(parentResponder)] ? [self parentResponder] : nil;
-                UIViewController *picker = [[pickerClass alloc] initWithNavTitle:thicknessTitle
-                    pickerSectionTitle:nil
-                    rows:rows
-                    selectedItemIndex:selectedIndex
-                    parentResponder:parentResp];
-                [targetDelegate pushViewController:picker];
-            }
-            return YES;
-        }];
-    [uiItems addObject:thicknessItem];
-
-    id fsSwitch = [%c(YTSettingsSectionItem) switchItemWithTitle:loadText(@"T4")
-        titleDescription:loadText(@"D4")
-        accessibilityIdentifier:nil
-        switchOn:fetchFullscreenOnlyState()
-        switchBlock:^BOOL (id cell, BOOL enabled) {
-            gFullscreenOnly = enabled;
-            [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kBGPSliderFullscreenOnlyKey];
-            if (gHasModifiedSliderThickness) {
-                refreshAllPlayerBars();
-            }
-            return YES;
-        }
-        settingItemId:2];
-    [uiItems addObject:fsSwitch];
-
-    id shortsSwitch = [%c(YTSettingsSectionItem) switchItemWithTitle:loadText(@"T5")
-        titleDescription:loadText(@"D5")
-        accessibilityIdentifier:nil
-        switchOn:fetchApplyToShortsState()
-        switchBlock:^BOOL (id cell, BOOL enabled) {
-            gApplyToShorts = enabled;
-            [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kBGPSliderApplyShortsKey];
-            if (gHasModifiedSliderThickness) {
-                refreshAllPlayerBars();
-            }
-            return YES;
-        }
-        settingItemId:3];
-    [uiItems addObject:shortsSwitch];
+    [uiItems addObject:buildThicknessPickerItem(loadText(@"T3"), loadText(@"D3"), compactPresets, kBGPNormalSliderKey, &gNormalSliderPercent, &gHasModifiedNormal, self, targetDelegate)];
+    [uiItems addObject:buildThicknessPickerItem(loadText(@"T4"), loadText(@"D4"), fullscreenPresets, kBGPFullscreenSliderKey, &gFullscreenSliderPercent, NULL, self, targetDelegate)];
+    [uiItems addObject:buildThicknessPickerItem(loadText(@"T5"), loadText(@"D5"), compactPresets, kBGPShortsSliderKey, &gShortsSliderPercent, NULL, self, targetDelegate)];
 
     YTIIcon *iConfig = [%c(YTIIcon) new];
     if ([iConfig respondsToSelector:@selector(setIconType:)]) {
@@ -1085,15 +1153,15 @@ static void refreshAllPlayerBars() {
     [defaults registerDefaults:@{
         kBGPStateKey: @NO,
         kBGPHideDIKey: @NO,
-        kBGPSliderThicknessKey: @100,
-        kBGPSliderFullscreenOnlyKey: @NO,
-        kBGPSliderApplyShortsKey: @NO,
+        kBGPNormalSliderKey: @100,
+        kBGPFullscreenSliderKey: @100,
+        kBGPShortsSliderKey: @100,
     }];
     gBGPState = [defaults boolForKey:kBGPStateKey];
     gHideDIState = [defaults boolForKey:kBGPHideDIKey];
-    NSInteger savedThickness = [defaults integerForKey:kBGPSliderThicknessKey];
-    gSliderThicknessPercent = savedThickness >= 50 ? savedThickness : 100;
-    gFullscreenOnly = [defaults boolForKey:kBGPSliderFullscreenOnlyKey];
-    gApplyToShorts = [defaults boolForKey:kBGPSliderApplyShortsKey];
-    gHasModifiedSliderThickness = (gSliderThicknessPercent != 100);
+    gNormalSliderPercent = sanitizeSliderPercent([defaults integerForKey:kBGPNormalSliderKey]);
+    gFullscreenSliderPercent = sanitizeSliderPercent([defaults integerForKey:kBGPFullscreenSliderKey]);
+    gShortsSliderPercent = sanitizeSliderPercent([defaults integerForKey:kBGPShortsSliderKey]);
+    gHasModifiedNormal = (gNormalSliderPercent != 100);
+    gHasModifiedSlider = (gNormalSliderPercent != 100 || gFullscreenSliderPercent != 100 || gShortsSliderPercent != 100);
 }
