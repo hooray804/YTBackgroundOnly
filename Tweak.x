@@ -111,7 +111,7 @@ static NSString * loadText(NSString *key) {
         return isKor ? @"일반 화면 슬라이더 두께" : @"Regular slider thickness";
     }
     if ([key isEqualToString:@"D3"]) {
-        return isKor ? @"일반 재생 화면(세로 화면 등)의 동영상 재생 바(슬라이더)와 재생 위치 점(스크러버)의 배율을 조절합니다." : @"Adjusts slider and scrubber scale in regular playback (portrait, miniplayer, etc.).";
+        return isKor ? @"일반 재생 화면(세로 화면 등)의 동영상 재생 바(슬라이더)와 재생 위치 점(스크러버)의 배율을 조절합니다." : @"Adjusts slider and scrubber scale in regular playback (portrait, etc.).";
     }
     if ([key isEqualToString:@"T4"]) {
         return isKor ? @"전체 화면 슬라이더 두께" : @"Fullscreen slider thickness";
