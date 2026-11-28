@@ -3,7 +3,7 @@ Name: YTBackgroundOnly
 Depends: mobilesubstrate
 Version: 3.2.1
 Architecture: iphoneos-arm64
-Description: Enables background playback and bypasses "Continue watching?" interruption prompts on YouTube.
+Description: Enables background playback, blocks "Continue watching?" prompts, hides Dynamic Island media info, and customizes slider thickness.
 Maintainer: hooray804
 Author: hooray804
 Section: Tweaks
