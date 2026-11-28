@@ -1,7 +1,7 @@
 Package: com.hooray804.ytbackgroundonly
 Name: YTBackgroundOnly
 Depends: mobilesubstrate
-Version: 1.0.0
+Version: 3.2.0
 Architecture: iphoneos-arm64
 Description: Enables background playback and bypasses "Continue watching?" interruption prompts on YouTube.
 Maintainer: hooray804
