@@ -9,7 +9,7 @@ on:
       tag_name:
         description: 'Release Tag Version'
         required: true
-        default: 'v3.0.0'
+        default: 'v3.1.0'
 
 jobs:
   build:
