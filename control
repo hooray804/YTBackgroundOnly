@@ -1,7 +1,7 @@
 Package: com.hooray804.ytbackgroundonly
 Name: YTBackgroundOnly
 Depends: mobilesubstrate
-Version: 3.2.1
+Version: 3.2.2
 Architecture: iphoneos-arm64
 Description: Enables background playback, blocks "Continue watching?" prompts, hides Dynamic Island media info, and customizes slider thickness.
 Maintainer: hooray804
